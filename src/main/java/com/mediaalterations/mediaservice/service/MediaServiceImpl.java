@@ -13,10 +13,18 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.ResponseEntity;
 import org.springframework.stereotype.Service;
+import software.amazon.awssdk.core.ResponseBytes;
+import software.amazon.awssdk.core.sync.RequestBody;
+import software.amazon.awssdk.services.s3.S3Client;
+import software.amazon.awssdk.services.s3.model.GetObjectRequest;
+import software.amazon.awssdk.services.s3.model.GetObjectResponse;
+import software.amazon.awssdk.services.s3.model.PutObjectRequest;
 
 import java.io.BufferedReader;
 import java.io.IOException;
 import java.io.InputStreamReader;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
@@ -34,7 +42,14 @@ public class MediaServiceImpl implements MediaService {
     @Value("${ffprobe.path}")
     private String ffprobeExePath;
 
+    @Value("${garage.bucket.uploads}")
+    private String uploadsBucket;
+
+    @Value("${garage.bucket.downloads}")
+    private String downloadsBucket;
+
     private final MainClient mainClient;
+    private final S3Client s3Client;
 
     private static final ObjectMapper MAPPER = new ObjectMapper();
 
@@ -48,12 +63,31 @@ public class MediaServiceImpl implements MediaService {
 
         FfmpegCmdResponse ffmpegCmdRes = new FfmpegCmdResponse(0,"0 KB");
 
+        Path tempInput = null;
+        Path tempOutput = null;
+
         try {
 
             double durationSeconds = probeAndParse(processDto.storageInputPath());
             long totalDurationMs = (long) (durationSeconds * 1000);
 
-            List<String> command = buildCommand(processDto.command());
+            log.info("Total Duration: {}", totalDurationMs);
+
+
+
+            // Download input file from Garage to temp location
+            tempInput = downloadFromGarage(uploadsBucket, processDto.storageInputPath());
+            log.info("Temporary Input Path: {}",tempInput);
+
+            tempOutput = Files.createTempFile("output-", ".tmp");
+            log.info("Temporary Output Path: {}",tempOutput);
+
+            String updatedCommand = processDto.command()
+                    .replace(processDto.storageInputPath(), tempInput.toString())
+                    .replace(processDto.storageOutputPath(), tempOutput.toString());
+            log.info("Replacing the input/output paths in the command with temp paths: {}",updatedCommand);
+
+            List<String> command = buildCommand(updatedCommand);
 
             boolean success = executeWithProgress(
                     command,
@@ -69,6 +103,10 @@ public class MediaServiceImpl implements MediaService {
                 throw new MediaProcessingException("FFmpeg execution failed");
             }
 
+            // Upload processed file back to Garage
+            uploadToGarage(downloadsBucket, processDto.storageOutputPath(), tempOutput);
+
+
             mainClient.updateStatusForProcess(
                     ProcessStatus.COMPLETED,
                     ffmpegCmdRes.getDuration(),
@@ -79,6 +117,8 @@ public class MediaServiceImpl implements MediaService {
 
         } catch (Exception ex) {
 
+            ex.printStackTrace();
+
             log.error("Processing failed. processId={}", processDto.id(), ex);
 
             mainClient.updateStatusForProcess(
@@ -88,6 +128,35 @@ public class MediaServiceImpl implements MediaService {
             );
 
             throw new MediaProcessingException("Media processing failed", ex);
+        }finally {
+            // Clean up temp files
+            deleteTempFile(tempInput);
+            deleteTempFile(tempOutput);
+        }
+    }
+
+    private Path downloadFromGarage(String bucket, String key) throws IOException {
+        log.info("Downloading from Garage. bucket={}, key={}", bucket, key);
+        ResponseBytes<GetObjectResponse> obj = s3Client.getObjectAsBytes(
+                GetObjectRequest.builder().bucket(bucket).key(key).build()
+        );
+        Path temp = Files.createTempFile("garage-input-", key.substring(key.lastIndexOf('.')));
+        Files.write(temp, obj.asByteArray());
+        return temp;
+    }
+
+    private void uploadToGarage(String bucket, String key, Path file) throws IOException {
+        log.info("Uploading to Garage. bucket={}, key={}", bucket, key);
+        s3Client.putObject(
+                PutObjectRequest.builder().bucket(bucket).key(key).build(),
+                RequestBody.fromFile(file)
+        );
+    }
+
+    private void deleteTempFile(Path path) {
+        if (path != null) {
+            try { Files.deleteIfExists(path); }
+            catch (IOException e) { log.warn("Failed to delete temp file: {}", path); }
         }
     }
 

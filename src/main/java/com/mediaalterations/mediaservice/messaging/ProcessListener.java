@@ -15,9 +15,13 @@ public class ProcessListener {
     private final MediaService mediaService;
 
     @RabbitListener(queues = "media.process.queue", concurrency = "2-4")
-    public void handleAllOrderEvents(ProcessDto event) throws Exception {
+    public void handleAllOrderEvents(ProcessDto event) {
         log.info("Received: {}",event);
-        mediaService.extractAudioFromVideo(event);
+        try {
+            mediaService.extractAudioFromVideo(event);
+        } catch (Exception e) {
+            log.error("Couldn't process the command. {}",event.id());
+        }
     }
 
 }

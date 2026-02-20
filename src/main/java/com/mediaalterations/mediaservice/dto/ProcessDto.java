@@ -10,6 +10,10 @@ public record ProcessDto(
         String storageIdInput,
         String storageIdOutput,
         String storageInputPath,
+        String storageOutputPath,
+
+        String fileName,
+        String finalFileSize,
         String command,
 
         ProcessStatus status,
