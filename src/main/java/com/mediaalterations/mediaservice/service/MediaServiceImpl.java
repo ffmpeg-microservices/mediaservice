@@ -204,6 +204,9 @@ public class MediaServiceImpl implements MediaService {
                         } catch (NumberFormatException e) {
                             log.warn("Could not parse total_size");
                         }
+                    } else {
+                        // log everything else — this is where ffmpeg errors show up
+                        log.info("FFmpeg output: {}", line);
                     }
 
                     progressCallback.accept(new FfmpegCmdResponse(Math.min(percent, 100), finalFileSize));
