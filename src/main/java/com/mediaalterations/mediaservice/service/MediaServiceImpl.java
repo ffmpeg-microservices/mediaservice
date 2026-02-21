@@ -1,8 +1,5 @@
 package com.mediaalterations.mediaservice.service;
 
-
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
 import com.mediaalterations.mediaservice.dto.FfmpegCmdResponse;
 import com.mediaalterations.mediaservice.dto.ProcessDto;
 import com.mediaalterations.mediaservice.dto.ProcessStatus;
@@ -19,6 +16,8 @@ import software.amazon.awssdk.services.s3.S3Client;
 import software.amazon.awssdk.services.s3.model.GetObjectRequest;
 import software.amazon.awssdk.services.s3.model.GetObjectResponse;
 import software.amazon.awssdk.services.s3.model.PutObjectRequest;
+import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.ObjectMapper;
 
 import java.io.BufferedReader;
 import java.io.IOException;
@@ -61,7 +60,7 @@ public class MediaServiceImpl implements MediaService {
         log.info("Starting media processing. processId={}, inputPath={}",
                 processDto.id(), processDto.storageInputPath());
 
-        FfmpegCmdResponse ffmpegCmdRes = new FfmpegCmdResponse(0,"0 KB");
+        FfmpegCmdResponse ffmpegCmdRes = new FfmpegCmdResponse(0, "0 KB");
 
         Path tempInput = null;
         Path tempOutput = null;
@@ -73,19 +72,17 @@ public class MediaServiceImpl implements MediaService {
 
             log.info("Total Duration: {}", totalDurationMs);
 
-
-
             // Download input file from Garage to temp location
             tempInput = downloadFromGarage(uploadsBucket, processDto.storageInputPath());
-            log.info("Temporary Input Path: {}",tempInput);
+            log.info("Temporary Input Path: {}", tempInput);
 
             tempOutput = Files.createTempFile("output-", ".tmp");
-            log.info("Temporary Output Path: {}",tempOutput);
+            log.info("Temporary Output Path: {}", tempOutput);
 
             String updatedCommand = processDto.command()
                     .replace(processDto.storageInputPath(), tempInput.toString())
                     .replace(processDto.storageOutputPath(), tempOutput.toString());
-            log.info("Replacing the input/output paths in the command with temp paths: {}",updatedCommand);
+            log.info("Replacing the input/output paths in the command with temp paths: {}", updatedCommand);
 
             List<String> command = buildCommand(updatedCommand);
 
@@ -96,8 +93,7 @@ public class MediaServiceImpl implements MediaService {
                         ffmpegCmdRes.setDuration(it.getDuration());
                         ffmpegCmdRes.setProgress(it.getProgress());
                     },
-                    totalDurationMs
-            );
+                    totalDurationMs);
 
             if (!success) {
                 throw new MediaProcessingException("FFmpeg execution failed");
@@ -106,12 +102,10 @@ public class MediaServiceImpl implements MediaService {
             // Upload processed file back to Garage
             uploadToGarage(downloadsBucket, processDto.storageOutputPath(), tempOutput);
 
-
             mainClient.updateStatusForProcess(
                     ProcessStatus.COMPLETED,
                     ffmpegCmdRes.getDuration(),
-                    processDto.id().toString()
-            );
+                    processDto.id().toString());
 
             log.info("Processing completed successfully. processId={}", processDto.id());
 
@@ -124,11 +118,10 @@ public class MediaServiceImpl implements MediaService {
             mainClient.updateStatusForProcess(
                     ProcessStatus.FAILED,
                     ffmpegCmdRes.getDuration(),
-                    processDto.id().toString()
-            );
+                    processDto.id().toString());
 
             throw new MediaProcessingException("Media processing failed", ex);
-        }finally {
+        } finally {
             // Clean up temp files
             deleteTempFile(tempInput);
             deleteTempFile(tempOutput);
@@ -138,8 +131,7 @@ public class MediaServiceImpl implements MediaService {
     private Path downloadFromGarage(String bucket, String key) throws IOException {
         log.info("Downloading from Garage. bucket={}, key={}", bucket, key);
         ResponseBytes<GetObjectResponse> obj = s3Client.getObjectAsBytes(
-                GetObjectRequest.builder().bucket(bucket).key(key).build()
-        );
+                GetObjectRequest.builder().bucket(bucket).key(key).build());
         Path temp = Files.createTempFile("garage-input-", key.substring(key.lastIndexOf('.')));
         Files.write(temp, obj.asByteArray());
         return temp;
@@ -149,14 +141,16 @@ public class MediaServiceImpl implements MediaService {
         log.info("Uploading to Garage. bucket={}, key={}", bucket, key);
         s3Client.putObject(
                 PutObjectRequest.builder().bucket(bucket).key(key).build(),
-                RequestBody.fromFile(file)
-        );
+                RequestBody.fromFile(file));
     }
 
     private void deleteTempFile(Path path) {
         if (path != null) {
-            try { Files.deleteIfExists(path); }
-            catch (IOException e) { log.warn("Failed to delete temp file: {}", path); }
+            try {
+                Files.deleteIfExists(path);
+            } catch (IOException e) {
+                log.warn("Failed to delete temp file: {}", path);
+            }
         }
     }
 
@@ -179,8 +173,7 @@ public class MediaServiceImpl implements MediaService {
     public boolean executeWithProgress(
             List<String> command,
             Consumer<FfmpegCmdResponse> progressCallback,
-            long totalDurationMs
-    ) {
+            long totalDurationMs) {
         ProcessBuilder pb = new ProcessBuilder(command);
         pb.redirectErrorStream(true);
 
@@ -195,15 +188,15 @@ public class MediaServiceImpl implements MediaService {
                 while ((line = reader.readLine()) != null) {
                     if (line.startsWith("out_time_ms=")) {
                         try {
-                            long currentTimeMs = Long.parseLong(line.split("=")[1].trim()) / 1000; // Convert micro to milli
+                            long currentTimeMs = Long.parseLong(line.split("=")[1].trim()) / 1000; // Convert micro to
+                                                                                                   // milli
                             if (totalDurationMs > 0) {
                                 percent = (int) ((currentTimeMs * 100) / totalDurationMs);
                             }
                         } catch (NumberFormatException e) {
                             log.warn("Could not parse out_time_ms");
                         }
-                    }
-                    else if (line.startsWith("total_size=")) {
+                    } else if (line.startsWith("total_size=")) {
                         try {
                             long sizeInBytes = Long.parseLong(line.split("=")[1].trim());
                             finalFileSize = formatFileSize(sizeInBytes);
@@ -229,7 +222,6 @@ public class MediaServiceImpl implements MediaService {
         }
     }
 
-
     // ===================== FFPROBE =====================
 
     public String probe(String inputPath) {
@@ -242,8 +234,7 @@ public class MediaServiceImpl implements MediaService {
                 "-print_format", "json",
                 "-show_format",
                 "-show_streams",
-                inputPath
-        );
+                inputPath);
 
         pb.redirectErrorStream(true);
 
@@ -252,8 +243,7 @@ public class MediaServiceImpl implements MediaService {
 
             StringBuilder output = new StringBuilder();
 
-            try (BufferedReader reader =
-                         new BufferedReader(new InputStreamReader(process.getInputStream()))) {
+            try (BufferedReader reader = new BufferedReader(new InputStreamReader(process.getInputStream()))) {
 
                 String line;
                 while ((line = reader.readLine()) != null) {
@@ -307,7 +297,8 @@ public class MediaServiceImpl implements MediaService {
     }
 
     private String formatFileSize(long bytes) {
-        if (bytes < 0) return "0 KB";
+        if (bytes < 0)
+            return "0 KB";
 
         double kb = bytes / 1024.0;
         double mb = kb / 1024.0;
