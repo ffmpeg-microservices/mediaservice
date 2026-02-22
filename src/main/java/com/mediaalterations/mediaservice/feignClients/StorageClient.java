@@ -9,5 +9,5 @@ import org.springframework.web.bind.annotation.PathVariable;
 public interface StorageClient {
     @GetMapping("/makeFileDownloadable/{storageId}")
     public ResponseEntity<String> makeFileDownloadable(
-            @PathVariable("filename") String storageId);
+            @PathVariable("storageId") String storageId);
 }
