@@ -40,6 +40,8 @@ import java.util.concurrent.*;
 @Service
 public class MediaServiceImpl implements MediaService {
 
+    private final ConcurrentHashMap<String, Process> activeProcesses = new ConcurrentHashMap<>();
+
     @Value("${ffmpeg.path}")
     private String ffmpegExePath;
 
@@ -63,7 +65,7 @@ public class MediaServiceImpl implements MediaService {
     // ===================== MAIN PROCESS =====================
 
     @Override
-    public void extractAudioFromVideo(ProcessDto processDto) {
+    public void workOnProcess(ProcessDto processDto) {
 
         log.info("Starting media processing. processId={}, inputPath={}",
                 processDto.id(), processDto.storageInputPath());
@@ -108,7 +110,7 @@ public class MediaServiceImpl implements MediaService {
 
                         progressProducer.publishFfmpegProcessProgress(ffmpegCmdRes);
                     },
-                    totalDurationMs);
+                    totalDurationMs, processDto.id().toString());
 
             if (!success) {
                 throw new MediaProcessingException("FFmpeg execution failed");
@@ -202,12 +204,15 @@ public class MediaServiceImpl implements MediaService {
     public boolean executeWithProgress(
             List<String> command,
             Consumer<FfmpegCmdResponse> progressCallback,
-            long totalDurationMs) {
+            long totalDurationMs,
+            String processId) {
+
         ProcessBuilder pb = new ProcessBuilder(command);
         pb.redirectErrorStream(true);
 
         try {
             Process process = pb.start();
+            activeProcesses.put(processId, process);
 
             try (BufferedReader reader = new BufferedReader(new InputStreamReader(process.getInputStream()))) {
                 String line;
@@ -249,16 +254,17 @@ public class MediaServiceImpl implements MediaService {
                 }
             }
 
-            boolean finished = process.waitFor(30, TimeUnit.MINUTES);
+            boolean finished = process.waitFor(10, TimeUnit.MINUTES);
             if (!finished) {
                 process.destroyForcibly();
                 throw new MediaProcessingException("FFmpeg timed out");
             }
-
             return process.exitValue() == 0;
 
         } catch (Exception e) {
             throw new MediaProcessingException("Failed during FFmpeg execution", e);
+        } finally {
+            activeProcesses.remove(processId);
         }
     }
 
@@ -336,42 +342,26 @@ public class MediaServiceImpl implements MediaService {
         }
     }
 
-    public String killProcess(FfmpegCmdResponse ffmpegCmdRes) {
+    public String killProcess(String processId) {
         try {
-            Optional<ProcessHandle> possibleProcess = ProcessHandle.of(ffmpegCmdRes.getPid());
-            if (possibleProcess.isPresent()) {
-                ProcessHandle process = possibleProcess.get();
-                process.info().command().ifPresent(cmd -> {
-                    log.info("Killing process with PID: {}, command: {}", ffmpegCmdRes.getPid(), cmd);
-                    if (cmd.contains("ffmpeg")) {
-                        log.info("Process with PID: {} is an ffmpeg process, proceeding to kill",
-                                ffmpegCmdRes.getPid());
-                    } else {
-                        log.warn("Process with PID: {} is not an ffmpeg process, aborting kill", ffmpegCmdRes.getPid());
-                        throw new ProcessKillException("No process found with PID: " + ffmpegCmdRes.getPid());
-                    }
-                });
-                boolean isAlive = process.isAlive();
-                if (!isAlive) {
-                    throw new ProcessKillException(
-                            "Process with PID: " + ffmpegCmdRes.getPid() + " is already finished or terminated");
-                }
-                boolean isKilled = process.destroyForcibly();
-                if (!isKilled) {
-                    throw new ProcessKillException("Failed to kill process with PID: " + ffmpegCmdRes.getPid());
-                }
+            Process process = activeProcesses.get(processId);
+            if (process == null) {
+                log.warn("Process with processId: {} is not found", processId);
+                throw new ProcessKillException(
+                        "No process found with processId:{} or it is already finished" + processId);
+            } else {
+                log.info("Initiated killing of process with processId:{}", processId);
+                process.destroyForcibly();
                 mainClient.updateStatusForProcess(
                         ProcessStatus.FAILED,
-                        ffmpegCmdRes.getFinalFileSize(),
-                        ffmpegCmdRes.getDuration(),
-                        ffmpegCmdRes.getProcessId());
+                        "",
+                        "",
+                        processId);
+                log.info("Process killed and FAILED status updated, processId:{}", processId);
                 return "Process killed successfully";
-            } else {
-                log.warn("No process found with PID: {}", ffmpegCmdRes.getPid());
-                throw new ProcessKillException("No process found with PID: " + ffmpegCmdRes.getPid());
             }
         } catch (Exception e) {
-            log.error("Error: {} PID: {}", e.getMessage(), ffmpegCmdRes.getPid());
+            log.error("Error: {} PID: {}", e.getMessage(), processId);
             throw new ProcessKillException("Failed to kill process", e);
         }
     }

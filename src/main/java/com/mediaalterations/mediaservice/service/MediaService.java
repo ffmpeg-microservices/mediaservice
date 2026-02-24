@@ -4,5 +4,7 @@ import com.mediaalterations.mediaservice.dto.ProcessDto;
 import org.springframework.stereotype.Service;
 
 public interface MediaService {
-    void extractAudioFromVideo(ProcessDto process) throws Exception;
+    void workOnProcess(ProcessDto process) throws Exception;
+
+    String killProcess(String processId);
 }
