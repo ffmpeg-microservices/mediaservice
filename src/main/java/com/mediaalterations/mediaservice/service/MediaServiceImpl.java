@@ -69,7 +69,7 @@ public class MediaServiceImpl implements MediaService {
                 processDto.id(), processDto.storageInputPath());
 
         FfmpegCmdResponse ffmpegCmdRes = new FfmpegCmdResponse(-1L, processDto.id().toString(), 0, "00:00:00:00.0000",
-                "0 KB");
+                "0 KB", ProcessStatus.WAITING);
 
         Path tempInput = null;
         Path tempOutput = null;
@@ -102,6 +102,7 @@ public class MediaServiceImpl implements MediaService {
                         ffmpegCmdRes.setDuration(it.getDuration());
                         ffmpegCmdRes.setProgress(it.getProgress());
                         ffmpegCmdRes.setFinalFileSize(it.getFinalFileSize());
+                        ffmpegCmdRes.setStatus(ProcessStatus.PROCESSING);
                         log.info("Progress update: {}% complete, duration={}, finalFileSize={} for processId={}",
                                 it.getProgress(), it.getDuration(), it.getFinalFileSize(), processDto.id());
 
@@ -123,6 +124,10 @@ public class MediaServiceImpl implements MediaService {
                     ffmpegCmdRes.getFinalFileSize(),
                     ffmpegCmdRes.getDuration(),
                     processDto.id().toString());
+
+            ffmpegCmdRes.setStatus(ProcessStatus.COMPLETED);
+            progressProducer.publishFfmpegProcessProgress(ffmpegCmdRes);
+
             // Make the Storage file downloadable
             storageClient.makeFileDownloadable(processDto.storageIdOutput());
             log.info("Processing completed successfully. processId={}", processDto.id());
@@ -140,6 +145,9 @@ public class MediaServiceImpl implements MediaService {
                     ffmpegCmdRes.getFinalFileSize(),
                     ffmpegCmdRes.getDuration(),
                     processDto.id().toString());
+
+            ffmpegCmdRes.setStatus(ProcessStatus.FAILED);
+            progressProducer.publishFfmpegProcessProgress(ffmpegCmdRes);
 
             throw new MediaProcessingException("Media processing failed", ex);
         } finally {
@@ -237,7 +245,7 @@ public class MediaServiceImpl implements MediaService {
 
                     progressCallback
                             .accept(new FfmpegCmdResponse(process.pid(), "", Math.min(percent, 100), finalFileDuration,
-                                    finalFileSize));
+                                    finalFileSize, ProcessStatus.PROCESSING));
                 }
             }
 
@@ -328,7 +336,7 @@ public class MediaServiceImpl implements MediaService {
         }
     }
 
-    private String killProcess(FfmpegCmdResponse ffmpegCmdRes) {
+    public String killProcess(FfmpegCmdResponse ffmpegCmdRes) {
         try {
             Optional<ProcessHandle> possibleProcess = ProcessHandle.of(ffmpegCmdRes.getPid());
             if (possibleProcess.isPresent()) {

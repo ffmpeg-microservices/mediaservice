@@ -13,4 +13,5 @@ public class FfmpegCmdResponse {
     private int progress;
     private String duration;
     private String finalFileSize;
+    private ProcessStatus status;
 }
