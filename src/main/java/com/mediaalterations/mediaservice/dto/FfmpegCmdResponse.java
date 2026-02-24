@@ -8,6 +8,8 @@ import lombok.Setter;
 @Getter
 @Setter
 public class FfmpegCmdResponse {
+    private long pid;
+    private String processId;
     private int progress;
     private String duration;
     private String finalFileSize;

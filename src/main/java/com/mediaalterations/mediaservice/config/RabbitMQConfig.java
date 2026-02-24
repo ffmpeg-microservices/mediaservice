@@ -15,6 +15,9 @@ public class RabbitMQConfig {
     @Value("${rabbitmq.exchange.process}")
     private String exchange;
 
+    @Value("${rabbitmq.exchange.progress}")
+    private String progressExchange;
+
     @Value("${rabbitmq.queue.process}")
     private String queue;
 
@@ -22,23 +25,30 @@ public class RabbitMQConfig {
     private String routingKey;
 
     @Bean
-    public Queue orderQueue(){
-        //a durable queue is a queue whose metadata is stored on disk and that will survive a broker (server) restart
+    public Queue orderQueue() {
+        // a durable queue is a queue whose metadata is stored on disk and that will
+        // survive a broker (server) restart
         return QueueBuilder.durable(queue).build();
     }
-    //FanoutExchange, DirectExchange, HeadersExchange
+
+    // FanoutExchange, DirectExchange, HeadersExchange
     @Bean
-    public TopicExchange orderExchange(){
+    public TopicExchange orderExchange() {
         return new TopicExchange(exchange);
     }
 
     @Bean
-    public MessageConverter jsonMessageConverter(){
+    public TopicExchange progressExchange() {
+        return new TopicExchange(progressExchange);
+    }
+
+    @Bean
+    public MessageConverter jsonMessageConverter() {
         return new JacksonJsonMessageConverter();
     }
 
     @Bean
-    public Binding binding(){
+    public Binding binding() {
         return BindingBuilder
                 .bind(orderQueue())
                 .to(orderExchange())
@@ -46,7 +56,7 @@ public class RabbitMQConfig {
     }
 
     @Bean
-    public RabbitTemplate rabbitTemplate(final ConnectionFactory connectionFactory){
+    public RabbitTemplate rabbitTemplate(final ConnectionFactory connectionFactory) {
         RabbitTemplate rabbitTemplate = new RabbitTemplate(connectionFactory);
         rabbitTemplate.setMessageConverter(jsonMessageConverter());
         return rabbitTemplate;

@@ -4,8 +4,10 @@ import com.mediaalterations.mediaservice.dto.FfmpegCmdResponse;
 import com.mediaalterations.mediaservice.dto.ProcessDto;
 import com.mediaalterations.mediaservice.dto.ProcessStatus;
 import com.mediaalterations.mediaservice.exception.MediaProcessingException;
+import com.mediaalterations.mediaservice.exception.ProcessKillException;
 import com.mediaalterations.mediaservice.feignClients.MainClient;
 import com.mediaalterations.mediaservice.feignClients.StorageClient;
+import com.mediaalterations.mediaservice.messaging.RabbitMQProducer;
 
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -29,6 +31,7 @@ import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
+import java.util.Optional;
 import java.util.function.Consumer;
 import java.util.concurrent.*;
 
@@ -49,6 +52,7 @@ public class MediaServiceImpl implements MediaService {
     @Value("${garage.bucket.downloads}")
     private String downloadsBucket;
 
+    private final RabbitMQProducer progressProducer;
     private final MainClient mainClient;
     private final StorageClient storageClient;
 
@@ -64,7 +68,8 @@ public class MediaServiceImpl implements MediaService {
         log.info("Starting media processing. processId={}, inputPath={}",
                 processDto.id(), processDto.storageInputPath());
 
-        FfmpegCmdResponse ffmpegCmdRes = new FfmpegCmdResponse(0, "00:00:00:00.0000", "0 KB");
+        FfmpegCmdResponse ffmpegCmdRes = new FfmpegCmdResponse(-1L, processDto.id().toString(), 0, "00:00:00:00.0000",
+                "0 KB");
 
         Path tempInput = null;
         Path tempOutput = null;
@@ -93,11 +98,14 @@ public class MediaServiceImpl implements MediaService {
             boolean success = executeWithProgress(
                     command,
                     it -> {
+                        ffmpegCmdRes.setPid(it.getPid());
                         ffmpegCmdRes.setDuration(it.getDuration());
                         ffmpegCmdRes.setProgress(it.getProgress());
                         ffmpegCmdRes.setFinalFileSize(it.getFinalFileSize());
                         log.info("Progress update: {}% complete, duration={}, finalFileSize={} for processId={}",
                                 it.getProgress(), it.getDuration(), it.getFinalFileSize(), processDto.id());
+
+                        progressProducer.publishFfmpegProcessProgress(ffmpegCmdRes);
                     },
                     totalDurationMs);
 
@@ -174,7 +182,7 @@ public class MediaServiceImpl implements MediaService {
         List<String> command = new ArrayList<>();
         command.add(ffmpegExePath);
 
-        command.addAll(Arrays.asList(rawCommand.split("\\s+")));
+        command.addAll(Arrays.asList(rawCommand.split("\s+")));
 
         log.info("Executing FFmpeg command: {}", String.join(" ", command));
 
@@ -228,7 +236,8 @@ public class MediaServiceImpl implements MediaService {
                     }
 
                     progressCallback
-                            .accept(new FfmpegCmdResponse(Math.min(percent, 100), finalFileDuration, finalFileSize));
+                            .accept(new FfmpegCmdResponse(process.pid(), "", Math.min(percent, 100), finalFileDuration,
+                                    finalFileSize));
                 }
             }
 
@@ -319,20 +328,43 @@ public class MediaServiceImpl implements MediaService {
         }
     }
 
-    private String formatFileSize(long bytes) {
-        if (bytes < 0)
-            return "0 KB";
-
-        double kb = bytes / 1024.0;
-        double mb = kb / 1024.0;
-        double gb = mb / 1024.0;
-
-        if (gb >= 1.0) {
-            return String.format("%.2f GB", gb);
-        } else if (mb >= 1.0) {
-            return String.format("%.2f MB", mb);
-        } else {
-            return String.format("%.2f KB", kb);
+    private String killProcess(FfmpegCmdResponse ffmpegCmdRes) {
+        try {
+            Optional<ProcessHandle> possibleProcess = ProcessHandle.of(ffmpegCmdRes.getPid());
+            if (possibleProcess.isPresent()) {
+                ProcessHandle process = possibleProcess.get();
+                process.info().command().ifPresent(cmd -> {
+                    log.info("Killing process with PID: {}, command: {}", ffmpegCmdRes.getPid(), cmd);
+                    if (cmd.contains("ffmpeg")) {
+                        log.info("Process with PID: {} is an ffmpeg process, proceeding to kill",
+                                ffmpegCmdRes.getPid());
+                    } else {
+                        log.warn("Process with PID: {} is not an ffmpeg process, aborting kill", ffmpegCmdRes.getPid());
+                        throw new ProcessKillException("No process found with PID: " + ffmpegCmdRes.getPid());
+                    }
+                });
+                boolean isAlive = process.isAlive();
+                if (!isAlive) {
+                    throw new ProcessKillException(
+                            "Process with PID: " + ffmpegCmdRes.getPid() + " is already finished or terminated");
+                }
+                boolean isKilled = process.destroyForcibly();
+                if (!isKilled) {
+                    throw new ProcessKillException("Failed to kill process with PID: " + ffmpegCmdRes.getPid());
+                }
+                mainClient.updateStatusForProcess(
+                        ProcessStatus.FAILED,
+                        ffmpegCmdRes.getFinalFileSize(),
+                        ffmpegCmdRes.getDuration(),
+                        ffmpegCmdRes.getProcessId());
+                return "Process killed successfully";
+            } else {
+                log.warn("No process found with PID: {}", ffmpegCmdRes.getPid());
+                throw new ProcessKillException("No process found with PID: " + ffmpegCmdRes.getPid());
+            }
+        } catch (Exception e) {
+            log.error("Error: {} PID: {}", e.getMessage(), ffmpegCmdRes.getPid());
+            throw new ProcessKillException("Failed to kill process", e);
         }
     }
 }
