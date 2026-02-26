@@ -79,7 +79,7 @@ public class MediaServiceImpl implements MediaService {
         try {
 
             // Download input file from Garage to temp location
-            tempInput = downloadFromGarage(uploadsBucket, processDto.storageInputPath());
+            tempInput = downloadFromGarage(uploadsBucket, downloadsBucket, processDto.storageInputPath());
             log.info("Temporary Input Path: {}", tempInput);
 
             tempOutput = Files.createTempFile("output-", processDto.fileName().substring(
@@ -159,10 +159,21 @@ public class MediaServiceImpl implements MediaService {
         }
     }
 
-    private Path downloadFromGarage(String bucket, String key) throws IOException {
-        log.info("Downloading from Garage. bucket={}, key={}", bucket, key);
-        ResponseBytes<GetObjectResponse> obj = s3Client.getObjectAsBytes(
-                GetObjectRequest.builder().bucket(bucket).key(key).build());
+    // check in inputs bucket then if not found then in outputs bucket
+    // since we are providing user the ability to choose from uploaded and processed
+    // files
+    private Path downloadFromGarage(String bucket1, String bucket2, String key) throws IOException {
+        log.info("Downloading from Garage. bucket={}, key={}", bucket1, key);
+        ResponseBytes<GetObjectResponse> obj = null;
+        try {
+            obj = s3Client.getObjectAsBytes(
+                    GetObjectRequest.builder().bucket(bucket1).key(key).build());
+        } catch (Exception e) {
+            log.warn("Failed to download from bucket: {}, trying bucket: {}. key={}", bucket1, bucket2, key);
+            obj = s3Client.getObjectAsBytes(
+                    GetObjectRequest.builder().bucket(bucket2).key(key).build());
+        }
+
         Path temp = Files.createTempFile("garage-input-", key.substring(key.lastIndexOf('.')));
         Files.write(temp, obj.asByteArray());
         return temp;
