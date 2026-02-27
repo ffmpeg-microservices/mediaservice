@@ -1,5 +1,6 @@
 package com.mediaalterations.mediaservice.messaging;
 
+import org.springframework.amqp.AmqpRejectAndDontRequeueException;
 import org.springframework.amqp.rabbit.annotation.RabbitListener;
 import org.springframework.stereotype.Component;
 
@@ -18,10 +19,15 @@ public class KillListener {
     // "#{killQueue.name}" — Spring EL that reads the name of the AnonymousQueue
     // bean
     // since the name is random, you can't hardcode it, so you reference the bean
-    @RabbitListener(queues = "#{killQueue.name}")
+    @RabbitListener(queues = "#{killQueue.name}", errorHandler = "killListenerErrorHandler")
     public void handleKill(String processId) {
         log.info("Request received for process kill, processId:{}", processId);
-        mediaService.killProcess(processId);
+        try {
+            mediaService.killProcess(processId);
+        } catch (Exception e) {
+            throw new AmqpRejectAndDontRequeueException("Error processing message", e);
+        }
+
     }
 
 }

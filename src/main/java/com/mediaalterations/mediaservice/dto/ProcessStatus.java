@@ -1,5 +1,5 @@
 package com.mediaalterations.mediaservice.dto;
 
 public enum ProcessStatus {
-    WAITING, PROCESSING, COMPLETED, FAILED
+    WAITING, PROCESSING, COMPLETED, FAILED, CANCELLED
 }

@@ -2,6 +2,8 @@ package com.mediaalterations.mediaservice.exception;
 
 import com.mediaalterations.mediaservice.dto.ApiError;
 import lombok.extern.slf4j.Slf4j;
+
+import org.springframework.amqp.AmqpRejectAndDontRequeueException;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.validation.FieldError;
@@ -21,7 +23,7 @@ public class GlobalExceptionHandler {
         log.error("MediaProcessingException: {}", ex.getMessage());
 
         return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
-                .body(new ApiError(ex.getMessage(),HttpStatus.INTERNAL_SERVER_ERROR.value()));
+                .body(new ApiError(ex.getMessage(), HttpStatus.INTERNAL_SERVER_ERROR.value()));
     }
 
     @ExceptionHandler(MethodArgumentNotValidException.class)
@@ -34,13 +36,22 @@ public class GlobalExceptionHandler {
                 .collect(Collectors.joining(", "));
 
         return ResponseEntity.badRequest()
-                .body(new ApiError(message,HttpStatus.BAD_REQUEST.value()));
+                .body(new ApiError(message, HttpStatus.BAD_REQUEST.value()));
+    }
+
+    @ExceptionHandler(AmqpRejectAndDontRequeueException.class)
+    public ResponseEntity<ApiError> handleRabbitMQException(AmqpRejectAndDontRequeueException ex) {
+
+        log.error("Message Broker error: {}", ex.getMessage());
+
+        return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+                .body(new ApiError("Something went wrong", HttpStatus.INTERNAL_SERVER_ERROR.value()));
     }
 
     @ExceptionHandler(Exception.class)
     public ResponseEntity<ApiError> handleGeneric(Exception ex) {
 
-        log.error("Unexpected error", ex);
+        log.error("Unexpected error :{} ", ex.getMessage());
 
         return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
                 .body(new ApiError("Something went wrong", HttpStatus.INTERNAL_SERVER_ERROR.value()));

@@ -364,7 +364,7 @@ public class MediaServiceImpl implements MediaService {
                 log.info("Initiated killing of process with processId:{}", processId);
                 process.destroyForcibly();
                 mainClient.updateStatusForProcess(
-                        ProcessStatus.FAILED,
+                        ProcessStatus.CANCELLED,
                         "",
                         "",
                         processId);
